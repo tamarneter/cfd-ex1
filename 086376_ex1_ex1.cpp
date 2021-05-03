@@ -1,16 +1,23 @@
 #include <iostream>
+#include <fstream>
 #include <math.h>
+#include <algorithm> 
 
 # define M_PI           3.14159265358979323846  /* pi */
 
 #include <cassert>
-#ifdef NDEBUG
-#define assert(condition) ((void)0)
-#else
-#define assert(condition) /*implementation defined*/
-#endif
 
 typedef double RealType;
+
+void debugPrintMat(const char *outFileName, RealType** m, int rows, int cols) {
+	std::ofstream out(outFileName);
+	for (int j = rows - 1; j >= 0; j--) {
+		for (int i = 0; i < cols; i++) {
+			out << m[i][j] << ", ";
+		}
+		out << std::endl;
+	}
+}
 
 // the general definition of the problems parameters:
 struct MeshTransformParams {
@@ -27,7 +34,7 @@ struct MeshTransformParams {
 	RealType deltaEta;
 	RealType deltaPsi;
 
-	RealType airfoilY(RealType x); // this is the positive y(x) - upper airfoil - assuming the lower airfoil is (-1)*y(x)
+	virtual RealType airfoilY(RealType x) = 0; // this is the positive y(x) - upper airfoil - assuming the lower airfoil is (-1)*y(x)
 	void checkParams() {
 		assert(iTEL > 0);
 		assert(iTEU > 0);
@@ -39,27 +46,29 @@ struct MeshTransformParams {
 
 // specific parameters for this exrecise :)
 struct Ex1MeshTransformParam : public MeshTransformParams {
-	int imax = 121;
-	int jmax = 41;
-	int iTEL = 21;
-	int iLE = 61;
-	int iTEU = 101;
-	RealType XSF = 1.1;
-	RealType YSF = 1.1;
-	RealType deltaY = 0.01;
-	RealType t = 0.12;
-	RealType xint = 1; // 1 for classical 1.008930411365 for modified
-	int deltaEta = 1;
-	int deltaPsi = 1;
+	Ex1MeshTransformParam() {
+		imax = 121;
+		jmax = 41;
+		iTEL = 21;
+		iLE = 61;
+		iTEU = 101;
+		XSF = 1.1;
+		YSF = 1.1;
+		deltaY = 0.01;
+		t = 0.12;
+		xint = 1; // 1 for classical 1.008930411365 for modified
+		deltaEta = 1;
+		deltaPsi = 1;
+	}
 
-	RealType airfoilY(RealType x) {
+	virtual RealType airfoilY(RealType x) {
 		return 5 * t * (0.2969 * sqrt(xint * x) - 0.1260 * (xint * x) - 0.3516 * pow(xint * x, 2) + 0.2843 * pow(xint * x, 3) - 0.1015 * pow(xint * x, 4));
 	}
 };
 
 struct MeshTransform {
 	MeshTransformParams* params;
-	RealType** S; // 2-D array (RHS to be)
+	RealType** arr; // 2-D array (RHS to be)
 	RealType** x;
 	RealType** y;
 	RealType** xEta;
@@ -74,8 +83,8 @@ struct MeshTransform {
 	RealType** Z;
 
 	// constructor
-	MeshTransform(MeshTransformParams* p) {
-		S = new RealType * [params->imax];
+	MeshTransform(MeshTransformParams* p) : params(p) {
+		arr = new RealType * [params->imax];
 		x = new RealType * [params->imax];
 		y = new RealType * [params->imax];
 		xEta = new RealType * [params->imax];
@@ -84,7 +93,7 @@ struct MeshTransform {
 		yPsi = new RealType * [params->imax];
 		deltaS = new RealType * [params->imax];
 		for (int i = 0; i < params->imax; i++) {
-			S[i] = new RealType[params->jmax];
+			arr[i] = new RealType[params->jmax];
 			x[i] = new RealType[params->jmax];
 			y[i] = new RealType[params->jmax];
 			xEta[i] = new RealType[params->jmax];
@@ -92,14 +101,15 @@ struct MeshTransform {
 			yEta[i] = new RealType[params->jmax];
 			yPsi[i] = new RealType[params->jmax];
 			deltaS[i] = new RealType[params->jmax];
+			std::fill_n(x[i], params->jmax, 0);
 		}
 		deltaX = 1.0 / (params->iLE - params->iTEL);
 	}
 
 	// destructor 
 	~MeshTransform() {
-		for (int i = 0; i < params->imax; i += 1) {
-			delete[] S[i];
+		for (int i = 0; i < params->imax; i++) {
+			delete[] arr[i];
 			delete[] x[i];
 			delete[] y[i];
 			delete[] xEta[i];
@@ -108,7 +118,7 @@ struct MeshTransform {
 			delete[] yPsi[i];
 			delete[] deltaS[i];
 		}
-		delete[] S;
+		delete[] arr;
 		delete[] x;
 		delete[] y;
 		delete[] xEta;
@@ -120,16 +130,18 @@ struct MeshTransform {
 
 	void initBoundaryCond() {
 		// all defined in the guidance file...
-		// lower + upper
+		// to seperate to little functions...
+		// lower + upper (7)
 		for (int i = params->iTEL - 1; i < params->iLE; i++) { // note that C++ indices starts at 0
-			x[i][0] = 1.0 - cos(M_PI * (params->iLE - i) * deltaX / 2.0);
-			y[i][0] = params->airfoilY(x[i][0]);
-		}
-		for (int i = params->iTEL - 1; i < params->iLE; i++) { // note that C++ indices starts at 0
-			x[i][0] = 1.0 - cos(M_PI * (params->iLE - i) * deltaX / 2.0);
+			x[i][0] = 1.0 - cos(M_PI * RealType(params->iLE - i) * deltaX / 2.0);
 			y[i][0] = params->airfoilY(x[i][0]) * (-1);
 		}
+		for (int i = params->iLE - 1; i < params->iTEU; i++) { // note that C++ indices starts at 0
+			x[i][0] = 1.0 - cos(M_PI * RealType(params->iLE - i) * deltaX / 2.0);
+			y[i][0] = params->airfoilY(x[i][0]);
+		}
 		// the rest
+		// 8
 		for (int i = params->iTEU - 1; i < params->imax; i++) {
 			x[i][0] = x[i - 1][0] + (x[i - 1][0] - x[i - 2][0]) * params->XSF;
 			y[i][0] = 0;
@@ -138,18 +150,18 @@ struct MeshTransform {
 			x[i][0] = x[params->imax - i - 1][0];
 			y[i][0] = 0;
 		}
-
-		y[params->imax][1] = params->deltaY;
+		// 9
+		y[params->imax - 1][1] = params->deltaY;
 
 		for (int j = 2; j < params->jmax; j++) {
-			y[params->imax][j] = y[params->imax][j - 1] + (y[params->imax][j - 1] - y[params->imax][j - 2]) * params->YSF;
+			y[params->imax - 1][j] = y[params->imax - 1][j - 1] + (y[params->imax - 1][j - 1] - y[params->imax - 1][j - 2]) * params->YSF;
 		}
 		for (int j = 1; j < params->jmax; j++) {
-			x[params->imax][j] = x[params->imax][j];
+			x[params->imax - 1][j] = x[params->imax - 1][0];
 		}
 		for (int j = 0; j < params->jmax; j++) {
-			y[1][j] = -y[params->imax][j];
-			x[1][j] = x[1][1];
+			y[0][j] = -y[params->imax - 1][j];
+			x[0][j] = x[0][0];
 		}
 	}
 
@@ -180,4 +192,11 @@ struct MeshTransform {
 	
 };
 
+int main(int argc, char *argv[]) {
+	Ex1MeshTransformParam params;
+	MeshTransform mesh(&params);
+	mesh.initBoundaryCond();
+	debugPrintMat("x.csv", mesh.x, params.jmax, params.imax);
+	return 0;
+}
 
